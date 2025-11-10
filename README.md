@@ -8,7 +8,7 @@ This powerpoint presentation is an overall summary of the project with detailed 
 This respository contains the pre-imputed version of the NHANES dataset collected from official website after pre-processing, and its post-imputed version which is ready to use in model construction.
 
 ## Code
-This repository contains all the code files (R script) with instructions to replicate our results.
+This repository contains all the code files (R script) with instructions to replicate the experiment results.
 
 ## Graphs
 This repository contains visualizations created to demonstrate intermediate and final results of the project.

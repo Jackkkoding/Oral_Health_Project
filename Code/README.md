@@ -1,1 +1,3 @@
-This file contains overall description of code files and structure, as well as instructions on loading datasets, running models and replicating results.
+This directory contains every R scripts related to the project, with main purposes of data loading and cleaning, model construction and calibration, results evaluation and visualization, etc.
+
+

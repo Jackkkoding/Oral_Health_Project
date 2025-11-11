@@ -1,0 +1,1134 @@
+
+```{r}
+##############################################################################
+# NHANES 2011–2012 · Inter-proximal CAL (iCAL) and PD (iPD) for every tooth
+#   – uses OHXPER_G (periodontal exam) and keeps only COMPLETE exams
+#   – converts 99 → NA on all numeric fields
+#   – wisdom teeth (01,16,17,32) are excluded
+#   – CAL_site = LA_site   if LA measured
+#                max(PC_site − CJ_site, 0) otherwise
+#   – Mesial sites = A / S     · Distal sites = D / P
+#   – iCAL = max(Mesial CAL, Distal CAL)
+#   – iPD  = max(Mesial  PD,  Distal  PD)
+#   – final table: SEQN + tooth_##_ICAL + tooth_##_PD  (for 28 teeth)
+##############################################################################
+
+# ── 0 · Packages ────────────────────────────────────────────────────────────
+library(nhanesA)
+library(dplyr)
+
+# ── 1 · Load periodontal file and recode 99 → NA ----------------------------
+ohxper <- nhanes("OHXPER_G") %>%                # 2011-12 periodontal exam
+  filter(OHDPDSTS == "Complete") %>%            # only COMPLETE exams
+  mutate(across(where(is.numeric), ~ na_if(.x, 99)))
+
+# ── 2 · Tooth numbers to keep (exclude wisdom teeth) ------------------------
+tooth_nums <- c("02","03","04","05","06","07","08","09",
+                "10","11","12","13","14","15",
+                "18","19","20","21","22","23","24","25",
+                "26","27","28","29","30","31")
+
+# ── 3 · Helper: inter-proximal CAL & PD for one tooth -----------------------
+calc_ical_pd <- function(df, tnum) {
+
+  get <- function(suffix) df[[paste0("OHX", tnum, suffix)]]
+
+  ##  site-level inputs ------------------------------------------------------
+  LA_A <- get("LAA"); LA_S <- get("LAS")
+  LA_D <- get("LAD"); LA_P <- get("LAP")
+
+  PC_A <- get("PCA"); PC_S <- get("PCS")
+  PC_D <- get("PCD"); PC_P <- get("PCP")
+
+  CJ_A <- get("CJA"); CJ_S <- get("CJS")
+  CJ_D <- get("CJD"); CJ_P <- get("CJP")
+
+  ##  PC - CJ 先处理缺失，再与 0 取最大值 -------------------------------
+  PCmCJ_A <- PC_A - CJ_A; PCmCJ_A[is.na(PC_A) | is.na(CJ_A)] <- NA; PCmCJ_A <- pmax(PCmCJ_A, 0)
+  PCmCJ_S <- PC_S - CJ_S; PCmCJ_S[is.na(PC_S) | is.na(CJ_S)] <- NA; PCmCJ_S <- pmax(PCmCJ_S, 0)
+  PCmCJ_D <- PC_D - CJ_D; PCmCJ_D[is.na(PC_D) | is.na(CJ_D)] <- NA; PCmCJ_D <- pmax(PCmCJ_D, 0)
+  PCmCJ_P <- PC_P - CJ_P; PCmCJ_P[is.na(PC_P) | is.na(CJ_P)] <- NA; PCmCJ_P <- pmax(PCmCJ_P, 0)
+
+  ##  CAL_site: 优先 LA，否则 max(PC−CJ, 0) --------------------------------
+  CAL_A <- coalesce(LA_A, PCmCJ_A)
+  CAL_S <- coalesce(LA_S, PCmCJ_S)
+  CAL_D <- coalesce(LA_D, PCmCJ_D)
+  CAL_P <- coalesce(LA_P, PCmCJ_P)
+
+  ##  mesial / distal maxima -------------------------------------------------
+  mesial_CAL <- pmax(CAL_A, CAL_S, na.rm = TRUE)
+  mesial_CAL[is.na(CAL_A) & is.na(CAL_S)] <- NA
+
+  distal_CAL <- pmax(CAL_D, CAL_P, na.rm = TRUE)
+  distal_CAL[is.na(CAL_D) & is.na(CAL_P)] <- NA
+
+  mesial_PD  <- pmax(PC_A, PC_S, na.rm = TRUE)
+  mesial_PD[is.na(PC_A) & is.na(PC_S)] <- NA
+
+  distal_PD  <- pmax(PC_D, PC_P, na.rm = TRUE)
+  distal_PD[is.na(PC_D) & is.na(PC_P)] <- NA
+
+  ##  inter-proximal (tooth-level) -------------------------------------------
+  iCAL <- pmax(mesial_CAL, distal_CAL, na.rm = TRUE)
+  iCAL[is.na(mesial_CAL) & is.na(distal_CAL)] <- NA
+
+  iPD  <- pmax(mesial_PD , distal_PD , na.rm = TRUE)
+  iPD[is.na(mesial_PD) & is.na(distal_PD)] <- NA
+
+  list(ical = iCAL, pd = iPD)
+}
+
+# ── 4 · Loop through teeth and append new columns ---------------------------
+for (tnum in tooth_nums) {
+  vals <- calc_ical_pd(ohxper, tnum)
+  ohxper[[paste0("tooth_", tnum, "_ICAL")]] <- vals$ical
+  ohxper[[paste0("tooth_", tnum, "_PD")  ]] <- vals$pd
+}
+
+# ── 5 · Final data frame: SEQN + tooth-level metrics ------------------------
+nhanes_2011_2012_toothmetrics <- ohxper %>%
+  select(SEQN, starts_with("tooth_"))
+
+# ── 6 · Quick inspection ----------------------------------------------------
+head(nhanes_2011_2012_toothmetrics, 3)
+```
+
+```{r}
+View(nhanes_2011_2012_toothmetrics)
+```
+
+```{r}
+colnames(nhanes_2011_2012_toothmetrics)
+unique(nhanes_2011_2012_toothmetrics$tooth_02_ICAL)
+```
+
+```{r}
+##############################################################################
+# NHANES 2009–2010 · inter-proximal CAL & PD   (OHXPER_F)
+##############################################################################
+
+library(nhanesA)
+library(dplyr)
+
+# ── 1 · Load & recode -------------------------------------------------------
+ohxper <- nhanes("OHXPER_F") %>%                 # 2009–10 periodontal exam
+  filter(OHDPDSTS == "Complete") %>%             # only COMPLETE exams
+  mutate(across(where(is.numeric), ~ na_if(.x, 99)))
+
+# ── 2 · Tooth list (no wisdom teeth) ----------------------------------------
+tooth_nums <- c("02","03","04","05","06","07","08","09",
+                "10","11","12","13","14","15",
+                "18","19","20","21","22","23","24","25",
+                "26","27","28","29","30","31")
+
+# ── 3 · Helper to compute iCAL & iPD ----------------------------------------
+calc_ical_pd <- function(df, tnum) {
+  g <- function(s) df[[paste0("OHX", tnum, s)]]
+
+  LA_A <- g("LAA"); LA_S <- g("LAS"); LA_D <- g("LAD"); LA_P <- g("LAP")
+  PC_A <- g("PCA"); PC_S <- g("PCS"); PC_D <- g("PCD"); PC_P <- g("PCP")
+  CJ_A <- g("CJA"); CJ_S <- g("CJS"); CJ_D <- g("CJD"); CJ_P <- g("CJP")
+
+  # PC - CJ with NA if either missing, then floor at 0
+  PCmCJ_A <- PC_A - CJ_A; PCmCJ_A[is.na(PC_A) | is.na(CJ_A)] <- NA; PCmCJ_A <- pmax(PCmCJ_A, 0)
+  PCmCJ_S <- PC_S - CJ_S; PCmCJ_S[is.na(PC_S) | is.na(CJ_S)] <- NA; PCmCJ_S <- pmax(PCmCJ_S, 0)
+  PCmCJ_D <- PC_D - CJ_D; PCmCJ_D[is.na(PC_D) | is.na(CJ_D)] <- NA; PCmCJ_D <- pmax(PCmCJ_D, 0)
+  PCmCJ_P <- PC_P - CJ_P; PCmCJ_P[is.na(PC_P) | is.na(CJ_P)] <- NA; PCmCJ_P <- pmax(PCmCJ_P, 0)
+
+  CAL_A <- coalesce(LA_A, PCmCJ_A)
+  CAL_S <- coalesce(LA_S, PCmCJ_S)
+  CAL_D <- coalesce(LA_D, PCmCJ_D)
+  CAL_P <- coalesce(LA_P, PCmCJ_P)
+
+  mesial_CAL <- pmax(CAL_A, CAL_S, na.rm = TRUE)
+  mesial_CAL[is.na(CAL_A) & is.na(CAL_S)] <- NA
+
+  distal_CAL <- pmax(CAL_D, CAL_P, na.rm = TRUE)
+  distal_CAL[is.na(CAL_D) & is.na(CAL_P)] <- NA
+
+  mesial_PD  <- pmax(PC_A , PC_S , na.rm = TRUE)
+  mesial_PD[is.na(PC_A) & is.na(PC_S)] <- NA
+
+  distal_PD  <- pmax(PC_D , PC_P , na.rm = TRUE)
+  distal_PD[is.na(PC_D) & is.na(PC_P)] <- NA
+
+  iCAL <- pmax(mesial_CAL, distal_CAL, na.rm = TRUE)
+  iCAL[is.na(mesial_CAL) & is.na(distal_CAL)] <- NA
+
+  iPD  <- pmax(mesial_PD , distal_PD , na.rm = TRUE)
+  iPD[is.na(mesial_PD) & is.na(distal_PD)] <- NA
+
+  list(ical = iCAL, pd = iPD)
+}
+
+# ── 4 · Build tooth-level variables ----------------------------------------
+for (tnum in tooth_nums) {
+  v <- calc_ical_pd(ohxper, tnum)
+  ohxper[[paste0("tooth_", tnum, "_ICAL")]] <- v$ical
+  ohxper[[paste0("tooth_", tnum, "_PD")]]   <- v$pd
+}
+
+# ── 5 · Final table ---------------------------------------------------------
+nhanes_2009_2010_toothmetrics <- ohxper %>%
+  select(SEQN, starts_with("tooth_"))
+
+# quick peek
+head(nhanes_2009_2010_toothmetrics, 3)
+```
+```{r}
+colnames(nhanes_2009_2010_toothmetrics)
+
+```
+
+
+```{r}
+##############################################################################
+# NHANES 2013–2014 · inter-proximal CAL & PD   (OHXPER_H)
+##############################################################################
+
+library(nhanesA)
+library(dplyr)
+
+ohxper <- nhanes("OHXPER_H") %>%                 # 2013–14 periodontal exam
+  filter(OHDPDSTS == "Complete") %>%
+  mutate(across(where(is.numeric), ~ na_if(.x, 99)))
+
+tooth_nums <- c("02","03","04","05","06","07","08","09",
+                "10","11","12","13","14","15",
+                "18","19","20","21","22","23","24","25",
+                "26","27","28","29","30","31")
+
+calc_ical_pd <- function(df, tnum) {
+  g <- function(s) df[[paste0("OHX", tnum, s)]]
+
+  LA_A <- g("LAA"); LA_S <- g("LAS"); LA_D <- g("LAD"); LA_P <- g("LAP")
+  PC_A <- g("PCA"); PC_S <- g("PCS"); PC_D <- g("PCD"); PC_P <- g("PCP")
+  CJ_A <- g("CJA"); CJ_S <- g("CJS"); CJ_D <- g("CJD"); CJ_P <- g("CJP")
+
+  # PC - CJ with NA if either missing, then floor at 0
+  PCmCJ_A <- PC_A - CJ_A; PCmCJ_A[is.na(PC_A) | is.na(CJ_A)] <- NA; PCmCJ_A <- pmax(PCmCJ_A, 0)
+  PCmCJ_S <- PC_S - CJ_S; PCmCJ_S[is.na(PC_S) | is.na(CJ_S)] <- NA; PCmCJ_S <- pmax(PCmCJ_S, 0)
+  PCmCJ_D <- PC_D - CJ_D; PCmCJ_D[is.na(PC_D) | is.na(CJ_D)] <- NA; PCmCJ_D <- pmax(PCmCJ_D, 0)
+  PCmCJ_P <- PC_P - CJ_P; PCmCJ_P[is.na(PC_P) | is.na(CJ_P)] <- NA; PCmCJ_P <- pmax(PCmCJ_P, 0)
+
+  CAL_A <- coalesce(LA_A, PCmCJ_A)
+  CAL_S <- coalesce(LA_S, PCmCJ_S)
+  CAL_D <- coalesce(LA_D, PCmCJ_D)
+  CAL_P <- coalesce(LA_P, PCmCJ_P)
+
+  mesial_CAL <- pmax(CAL_A, CAL_S, na.rm = TRUE)
+  mesial_CAL[is.na(CAL_A) & is.na(CAL_S)] <- NA
+
+  distal_CAL <- pmax(CAL_D, CAL_P, na.rm = TRUE)
+  distal_CAL[is.na(CAL_D) & is.na(CAL_P)] <- NA
+
+  mesial_PD  <- pmax(PC_A , PC_S , na.rm = TRUE)
+  mesial_PD[is.na(PC_A) & is.na(PC_S)] <- NA
+
+  distal_PD  <- pmax(PC_D , PC_P , na.rm = TRUE)
+  distal_PD[is.na(PC_D) & is.na(PC_P)] <- NA
+
+  iCAL <- pmax(mesial_CAL, distal_CAL, na.rm = TRUE)
+  iCAL[is.na(mesial_CAL) & is.na(distal_CAL)] <- NA
+
+  iPD  <- pmax(mesial_PD , distal_PD , na.rm = TRUE)
+  iPD[is.na(mesial_PD) & is.na(distal_PD)] <- NA
+
+  list(ical = iCAL, pd = iPD)
+}
+
+for (tnum in tooth_nums) {
+  v <- calc_ical_pd(ohxper, tnum)
+  ohxper[[paste0("tooth_", tnum, "_ICAL")]] <- v$ical
+  ohxper[[paste0("tooth_", tnum, "_PD")]]   <- v$pd
+}
+
+nhanes_2013_2014_toothmetrics <- ohxper %>%
+  select(SEQN, starts_with("tooth_"))
+
+head(nhanes_2013_2014_toothmetrics, 3)
+```
+
+```{r}
+##############################################################################
+# Combine tooth-level metrics from all three cycles
+##############################################################################
+
+library(dplyr)
+
+toothmetrics_all <- bind_rows(
+  nhanes_2009_2010_toothmetrics  %>% mutate(cycle = "2009–2010"),
+  nhanes_2011_2012_toothmetrics  %>% mutate(cycle = "2011–2012"),
+  nhanes_2013_2014_toothmetrics  %>% mutate(cycle = "2013–2014")
+) %>%
+  relocate(cycle, .after = SEQN)   # optional: put cycle right after SEQN
+
+# quick check
+table(toothmetrics_all$cycle, useNA = "ifany")
+dim(toothmetrics_all)
+```
+
+```{r}
+View(toothmetrics_all)
+```
+
+```{r}
+# ── 1 · Load dataset ───────────────────────────────
+nhanes_final <- read.csv("nhanes_final.csv")
+
+# ── 2 · Quick check ────────────────────────────────
+# Show dimensions (rows, columns)
+dim(nhanes_final)
+
+# Show just the number of rows
+nrow(nhanes_final)
+
+# Optional: preview the first few rows
+head(nhanes_final)
+```
+
+```{r}
+colnames(toothmetrics_all)
+colnames(nhanes_final)
+```
+
+```{r}
+## 1) 检查是否有重复 SEQN
+any(duplicated(nhanes_final$SEQN))       # 如果 FALSE 说明 nhanes_final 里唯一
+any(duplicated(toothmetrics_all$SEQN))   # 如果 FALSE 说明 toothmetrics_all 里唯一
+
+## 2) 提取唯一的 SEQN
+nhanes_ids <- sort(unique(nhanes_final$SEQN))
+tooth_ids  <- sort(unique(toothmetrics_all$SEQN))
+
+## 3) 检查长度是否相同
+length(nhanes_ids)
+length(tooth_ids)
+
+## 4) 检查是否完全一样
+setequal(nhanes_ids, tooth_ids)   # TRUE = 完全一样
+
+## 5) 找差异（如果有的话）
+setdiff(nhanes_ids, tooth_ids)    # nhanes_final 里有但 toothmetrics_all 没有的
+setdiff(tooth_ids, nhanes_ids)    # toothmetrics_all 里有但 nhanes_final 没有的
+```
+
+```{r}
+## 1) Manually list the columns to remove from nhanes_final
+drop_cols <- c(
+  "severity","cycle",
+  "tooth_02_ICAL","tooth_02_PD",
+  "tooth_03_ICAL","tooth_03_PD",
+  "tooth_04_ICAL","tooth_04_PD",
+  "tooth_05_ICAL","tooth_05_PD",
+  "tooth_06_ICAL","tooth_06_PD",
+  "tooth_07_ICAL","tooth_07_PD",
+  "tooth_08_ICAL","tooth_08_PD",
+  "tooth_09_ICAL","tooth_09_PD",
+  "tooth_10_ICAL","tooth_10_PD",
+  "tooth_11_ICAL","tooth_11_PD",
+  "tooth_12_ICAL","tooth_12_PD",
+  "tooth_13_ICAL","tooth_13_PD",
+  "tooth_14_ICAL","tooth_14_PD",
+  "tooth_15_ICAL","tooth_15_PD",
+  "tooth_18_ICAL","tooth_18_PD",
+  "tooth_19_ICAL","tooth_19_PD",
+  "tooth_20_ICAL","tooth_20_PD",
+  "tooth_21_ICAL","tooth_21_PD",
+  "tooth_22_ICAL","tooth_22_PD",
+  "tooth_23_ICAL","tooth_23_PD",
+  "tooth_24_ICAL","tooth_24_PD",
+  "tooth_25_ICAL","tooth_25_PD",
+  "tooth_26_ICAL","tooth_26_PD",
+  "tooth_27_ICAL","tooth_27_PD",
+  "tooth_28_ICAL","tooth_28_PD",
+  "tooth_29_ICAL","tooth_29_PD",
+  "tooth_30_ICAL","tooth_30_PD",
+  "tooth_31_ICAL","tooth_31_PD"
+)
+
+## 2) Drop those columns from nhanes_final
+nhanes_final_trim <- nhanes_final[, !(names(nhanes_final) %in% drop_cols)]
+
+## 3) Merge by SEQN
+## Use all.x = TRUE to keep ALL rows from toothmetrics_all (safe default)
+merged_df <- merge(toothmetrics_all, nhanes_final_trim,
+                   by = "SEQN", all.x = TRUE, sort = FALSE)
+
+## 4) Show dimensions
+cat("toothmetrics_all dim: ", dim(toothmetrics_all), "\n")
+cat("nhanes_final_trim dim:", dim(nhanes_final_trim),  "\n")
+cat("merged_df dim:        ", dim(merged_df),         "\n")
+```
+
+```{r}
+colnames(merged_df)
+View(merged_df)
+```
+```{r}
+getwd()
+# Save your dataset as CSV into the current studio folder
+write.csv(merged_df,
+          file = "/teamspace/studios/this_studio/merged_df.csv",
+          row.names = FALSE)
+
+# Print out the path so you can see where it went
+cat("File saved to: /teamspace/studios/this_studio/merged_df.csv\n")
+
+```
+
+```{r}
+unique(merged_df$smoking_status)
+```
+
+```{r}
+library(dplyr)
+merged_df <- read.csv("merged_df.csv")
+merged_df <- merged_df %>%
+  mutate(
+    Current_Smoker = case_when(
+      smoking_status == "Current" ~ 1,
+      smoking_status %in% c("Never", "Former") ~ 0,
+      TRUE ~ NA_real_   # 保持 NA
+    )
+  )
+```
+
+For checking NA percentage
+```{r}
+# count + percent NA
+sum(is.na(merged_df$drinking_status))
+mean(is.na(merged_df$drinking_status))  # proportion NA
+
+# frequency table including NA
+table(addNA(merged_df$drinking_status), useNA = "ifany")
+```
+
+Cart Imputation
+```{r}
+
+library(dplyr)
+library(mice)
+
+############################## UTILITIES ######################################
+# 只用于统计阈值计数（列名匹配 pattern 的列中，值>=thr 的牙数）
+count_ge <- function(df, pattern, thr) {
+  sel <- grepl(pattern, names(df))
+  if (!any(sel)) return(rep(0L, nrow(df)))
+  rowSums(df[, sel, drop = FALSE] >= thr, na.rm = TRUE)
+}
+
+# 在“插补列”上做三分类（CDC/AAP 2012），无牙者强制 None/Mild
+add_imputed_severity <- function(df) {
+  imp_pat_cal <- "^imputed_tooth_\\d{2}_ICAL$"
+  imp_pat_pd  <- "^imputed_tooth_\\d{2}_PD$"
+  df %>%
+    mutate(
+      imp_n_teeth_CAL_ge_4 = count_ge(., imp_pat_cal, 4),
+      imp_n_teeth_CAL_ge_6 = count_ge(., imp_pat_cal, 6),
+      imp_n_teeth_PD_ge_5  = count_ge(., imp_pat_pd,  5),
+      imputed_severity = dplyr::case_when(
+        (tooth_count == 0 | missing_teeth == 28) ~ "None/Mild",
+        imp_n_teeth_CAL_ge_6 >= 2 & imp_n_teeth_PD_ge_5 >= 1 ~ "Severe",
+        imp_n_teeth_CAL_ge_4 >= 2 | imp_n_teeth_PD_ge_5 >= 2 ~ "Moderate",
+        TRUE ~ "None/Mild"
+      )
+    )
+}
+
+############################## PREP DATA ######################################
+# 若没有 Current_Smoker，则按 smoking_status 构造（有则不改）
+if (!"Current_Smoker" %in% names(merged_df) && "smoking_status" %in% names(merged_df)) {
+  merged_df <- merged_df %>%
+    mutate(
+      smoking_status = trimws(as.character(smoking_status)),
+      Current_Smoker = dplyr::case_when(
+        smoking_status == "Current" ~ 1,
+        smoking_status %in% c("Never", "Former") ~ 0,
+        TRUE ~ NA_real_
+      )
+    )
+}
+
+# 无牙者标记，并拆分：无牙者不进 MICE
+df0 <- merged_df %>%
+  mutate(is_edentulous = (tooth_count == 0 | missing_teeth == 28))
+
+df_edentulous <- df0 %>% filter(is_edentulous)
+df_for_impute <- df0 %>% filter(!is_edentulous)
+
+# 识别现存牙列列（tooth_XX_ICAL / tooth_XX_PD）
+tooth_cols <- grep("^tooth_\\d{2}_(ICAL|PD)$", names(df_for_impute), value = TRUE)
+stopifnot(length(tooth_cols) > 0)
+
+# 主分析插补预测因子（包含 missing_teeth 和 Current_Smoker）
+covariates_main <- c("age", "sex", "race", "OHQ835", "OHQ850", "OHQ855","OHQ860",
+                     "missing_teeth","Current_Smoker")
+
+# 类型整理（性别/种族因子，其他数值）
+df_for_impute <- df_for_impute %>%
+  mutate(
+    sex  = factor(sex,  levels = c("Male","Female")),
+    race = factor(race, levels = c("White","Black","Hispanic","Other")),
+    across(c(OHQ835,OHQ850,OHQ855,OHQ860,Current_Smoker,
+             age,missing_teeth,tooth_count), as.numeric)
+  )
+
+############################## MICE HELPERS ###################################
+# 建立 mids 对象（仅牙列插补；可选 CART/PMM；可选是否排除吸烟变量）
+build_mids <- function(exclude_smoking = FALSE,
+                       method = c("cart","pmm"),
+                       m = 10, maxit = 50, seed = 123) {
+  method <- match.arg(method)
+  covars <- if (exclude_smoking) setdiff(covariates_main, c("Current_Smoker","smoking_status"))
+            else covariates_main
+
+  vars_for_imputation <- c("SEQN", tooth_cols, covars)
+  mice_data <- df_for_impute[, intersect(vars_for_imputation, names(df_for_impute))]
+
+  set.seed(seed)
+  ini  <- mice(mice_data, m = 1, maxit = 0)
+  pred <- quickpred(mice_data, mincor = .15)  # 稍稀疏的预测矩阵更稳
+  pred[, "SEQN"] <- 0
+
+  meth <- ini$method
+  meth[names(mice_data)] <- ""   # 默认不插补非牙列
+  meth[tooth_cols] <- method     # 仅牙列使用 CART/PMM
+
+  mice(mice_data, m = m, maxit = maxit, method = meth,
+     predictorMatrix = pred, printFlag = TRUE)
+}
+
+# 从 mids 完成一套数据：添加 imputed_* 列，合并无牙者并计算 imputed_severity
+complete_and_derive <- function(mids_obj, imp_index = 1) {
+  comp <- complete(mids_obj, imp_index)
+  comp_impcols <- comp[, tooth_cols, drop = FALSE]
+  names(comp_impcols) <- paste0("imputed_", names(comp_impcols))
+
+  tmp <- df_for_impute %>%
+    left_join(bind_cols(comp["SEQN"], comp_impcols), by = "SEQN")
+
+  # 确保无牙者也有 imputed_* 列（设为 NA）
+  imp_names <- paste0("imputed_", tooth_cols)
+  for (nm in setdiff(imp_names, names(df_edentulous))) {
+    df_edentulous[[nm]] <- NA_real_
+  }
+
+  bind_rows(tmp, df_edentulous) %>%
+    add_imputed_severity()
+}
+
+############################## RUN IMPUTATIONS ################################
+m <- 10
+maxit <- 50
+
+# —— CART
+mids_cart <- build_mids(exclude_smoking = FALSE, method = "cart", m = m, maxit = maxit, seed = 123)
+completed_cart <- lapply(1:m, function(k) complete_and_derive(mids_cart, k))
+
+# -------------------- Save Mids and Completed Lists--------------------
+# make an artifacts folder
+out_dir <- "mi_artifacts"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+stamp <- format(Sys.time(), "%Y%m%d-%H%M%S")
+
+# ---- CART ----
+saveRDS(mids_cart,       file.path(out_dir, sprintf("mids_CART_m%02d_it%02d_%s.rds", m, maxit, stamp)))
+saveRDS(completed_cart,  file.path(out_dir, sprintf("completed_CART_m%02d_it%02d_%s.rds", m, maxit, stamp)))
+```
+
+PMM imputation
+```{r}
+
+
+library(dplyr)
+library(mice)
+
+############################## UTILITIES ######################################
+# 只用于统计阈值计数（列名匹配 pattern 的列中，值>=thr 的牙数）
+count_ge <- function(df, pattern, thr) {
+  sel <- grepl(pattern, names(df))
+  if (!any(sel)) return(rep(0L, nrow(df)))
+  rowSums(df[, sel, drop = FALSE] >= thr, na.rm = TRUE)
+}
+
+# 在“插补列”上做三分类（CDC/AAP 2012），无牙者强制 None/Mild
+add_imputed_severity <- function(df) {
+  imp_pat_cal <- "^imputed_tooth_\\d{2}_ICAL$"
+  imp_pat_pd  <- "^imputed_tooth_\\d{2}_PD$"
+  df %>%
+    mutate(
+      imp_n_teeth_CAL_ge_4 = count_ge(., imp_pat_cal, 4),
+      imp_n_teeth_CAL_ge_6 = count_ge(., imp_pat_cal, 6),
+      imp_n_teeth_PD_ge_5  = count_ge(., imp_pat_pd,  5),
+      imputed_severity = dplyr::case_when(
+        (tooth_count == 0 | missing_teeth == 28) ~ "None/Mild",
+        imp_n_teeth_CAL_ge_6 >= 2 & imp_n_teeth_PD_ge_5 >= 1 ~ "Severe",
+        imp_n_teeth_CAL_ge_4 >= 2 | imp_n_teeth_PD_ge_5 >= 2 ~ "Moderate",
+        TRUE ~ "None/Mild"
+      )
+    )
+}
+
+############################## PREP DATA ######################################
+# 若没有 Current_Smoker，则按 smoking_status 构造（有则不改）
+if (!"Current_Smoker" %in% names(merged_df) && "smoking_status" %in% names(merged_df)) {
+  merged_df <- merged_df %>%
+    mutate(
+      smoking_status = trimws(as.character(smoking_status)),
+      Current_Smoker = dplyr::case_when(
+        smoking_status == "Current" ~ 1,
+        smoking_status %in% c("Never", "Former") ~ 0,
+        TRUE ~ NA_real_
+      )
+    )
+}
+
+# 无牙者标记，并拆分：无牙者不进 MICE
+df0 <- merged_df %>%
+  mutate(is_edentulous = (tooth_count == 0 | missing_teeth == 28))
+
+df_edentulous <- df0 %>% filter(is_edentulous)
+df_for_impute <- df0 %>% filter(!is_edentulous)
+
+# 识别现存牙列列（tooth_XX_ICAL / tooth_XX_PD）
+tooth_cols <- grep("^tooth_\\d{2}_(ICAL|PD)$", names(df_for_impute), value = TRUE)
+stopifnot(length(tooth_cols) > 0)
+
+# 主分析插补预测因子（包含 missing_teeth 和 Current_Smoker）
+covariates_main <- c("age", "sex", "race", "OHQ835", "OHQ850", "OHQ855","OHQ860",
+                     "missing_teeth","Current_Smoker")
+
+# 类型整理（性别/种族因子，其他数值）
+df_for_impute <- df_for_impute %>%
+  mutate(
+    sex  = factor(sex,  levels = c("Male","Female")),
+    race = factor(race, levels = c("White","Black","Hispanic","Other")),
+    across(c(OHQ835,OHQ850,OHQ855,OHQ860,Current_Smoker,
+             age,missing_teeth,tooth_count), as.numeric)
+  )
+
+############################## MICE HELPERS ###################################
+# 建立 mids 对象（仅牙列插补；可选 CART/PMM；可选是否排除吸烟变量）
+build_mids <- function(exclude_smoking = FALSE,
+                       method = c("cart","pmm"),
+                       m = 10, maxit = 50, seed = 123) {
+  method <- match.arg(method)
+  covars <- if (exclude_smoking) setdiff(covariates_main, c("Current_Smoker","smoking_status"))
+            else covariates_main
+
+  vars_for_imputation <- c("SEQN", tooth_cols, covars)
+  mice_data <- df_for_impute[, intersect(vars_for_imputation, names(df_for_impute))]
+
+  set.seed(seed)
+  ini  <- mice(mice_data, m = 1, maxit = 0)
+  pred <- quickpred(mice_data, mincor = .15)  # 稍稀疏的预测矩阵更稳
+  pred[, "SEQN"] <- 0
+
+  meth <- ini$method
+  meth[names(mice_data)] <- ""   # 默认不插补非牙列
+  meth[tooth_cols] <- method     # 仅牙列使用 CART/PMM
+
+  mice(mice_data, m = m, maxit = maxit, method = meth,
+     predictorMatrix = pred, printFlag = TRUE)
+}
+
+# 从 mids 完成一套数据：添加 imputed_* 列，合并无牙者并计算 imputed_severity
+complete_and_derive <- function(mids_obj, imp_index = 1) {
+  comp <- complete(mids_obj, imp_index)
+  comp_impcols <- comp[, tooth_cols, drop = FALSE]
+  names(comp_impcols) <- paste0("imputed_", names(comp_impcols))
+
+  tmp <- df_for_impute %>%
+    left_join(bind_cols(comp["SEQN"], comp_impcols), by = "SEQN")
+
+  # 确保无牙者也有 imputed_* 列（设为 NA）
+  imp_names <- paste0("imputed_", tooth_cols)
+  for (nm in setdiff(imp_names, names(df_edentulous))) {
+    df_edentulous[[nm]] <- NA_real_
+  }
+
+  bind_rows(tmp, df_edentulous) %>%
+    add_imputed_severity()
+}
+
+############################## RUN IMPUTATIONS ################################
+m <- 10
+maxit <- 50
+
+# —— PMM 
+mids_pmm <- build_mids(exclude_smoking = FALSE, method = "pmm", m = m, maxit = maxit, seed = 124) 
+completed_pmm <- lapply(1:m, function(k) complete_and_derive(mids_pmm, k)) 
+
+# -------------------- Save Mids and Completed Lists--------------------
+# make an artifacts folder
+out_dir <- "mi_artifacts"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+stamp <- format(Sys.time(), "%Y%m%d-%H%M%S")
+
+# ---- PMM
+saveRDS(mids_pmm,        file.path(out_dir, sprintf("mids_PMM_m%02d_it%02d_%s.rds",  m, maxit, stamp)))
+saveRDS(completed_pmm,   file.path(out_dir, sprintf("completed_PMM_m%02d_it%02d_%s.rds", m, maxit, stamp)))
+
+############################## WHAT YOU NOW HAVE ############################## 
+# completed_cart : 长度 m 的列表，每个元素是一张完成数据（含 imputed_* 和 imputed_severity） 
+# completed_pmm : 同上（PMM 方法） # 无牙者在所有完成数据中均被强制 imputed_severity = "None/Mild" 
+```
+
+
+Write & save 10 datasets for CART and PMM
+```{r}
+
+# ===================== 1) Save the 10 datasets for each method =====================
+library(dplyr)
+
+out_dir <- "mi_artifacts"
+
+completed_cart <- readRDS(file.path(out_dir, "completed_CART_m10_it50_20250914-121824.rds"))
+completed_pmm  <- readRDS(file.path(out_dir, "completed_PMM_m10_it50_20250915-194952.rds"))
+
+stopifnot(is.list(completed_cart), length(completed_cart) == 10)
+stopifnot(is.list(completed_pmm),  length(completed_pmm)  == 10)
+
+dir.create("imputed_CART", showWarnings = FALSE, recursive = TRUE)
+dir.create("imputed_PMM",  showWarnings = FALSE, recursive = TRUE)
+
+invisible(lapply(seq_along(completed_cart), function(k) {
+  write.csv(completed_cart[[k]], file.path("imputed_CART", sprintf("cart_imp_%02d.csv", k)), row.names = FALSE)
+}))
+invisible(lapply(seq_along(completed_pmm), function(k) {
+  write.csv(completed_pmm[[k]],  file.path("imputed_PMM",  sprintf("pmm_imp_%02d.csv",  k)), row.names = FALSE)
+}))
+
+cat("Wrote 10 CART files to 'imputed_CART/' and 10 PMM files to 'imputed_PMM/'.\n")
+
+```
+
+
+Validation-Age Trend
+```{r}
+# ===================== 2) Age-trend validation per imputation =====================
+library(survey)
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+
+#---- get stored imputed list objects ----
+out_dir <- "mi_artifacts"
+
+completed_cart <- readRDS(file.path(out_dir, "completed_CART_m10_it50_20250914-121824.rds"))
+completed_pmm  <- readRDS(file.path(out_dir, "completed_PMM_m10_it50_20250915-194952.rds"))
+
+# ---- helpers ----
+count_ge_cols <- function(df, pattern, thr) {
+  sel <- grepl(pattern, names(df))
+  if (!any(sel)) return(rep(0L, nrow(df)))
+  rowSums(df[, sel, drop = FALSE] >= thr, na.rm = TRUE)
+}
+
+add_observed_severity <- function(df) {
+  obs_pat_cal <- "^tooth_\\d{2}_ICAL$"
+  obs_pat_pd  <- "^tooth_\\d{2}_PD$"
+  df %>%
+    mutate(
+      obs_n_teeth_CAL_ge_4 = count_ge_cols(., obs_pat_cal, 4),
+      obs_n_teeth_CAL_ge_6 = count_ge_cols(., obs_pat_cal, 6),
+      obs_n_teeth_PD_ge_5  = count_ge_cols(., obs_pat_pd,  5),
+      observed_severity = dplyr::case_when(
+        (tooth_count == 0 | missing_teeth == 28) ~ "None/Mild",
+        obs_n_teeth_CAL_ge_6 >= 2 & obs_n_teeth_PD_ge_5 >= 1 ~ "Severe",
+        obs_n_teeth_CAL_ge_4 >= 2 | obs_n_teeth_PD_ge_5 >= 2 ~ "Moderate",
+        TRUE ~ "None/Mild"
+      )
+    )
+}
+
+make_age_groups <- function(df,
+                            breaks = c(30, 40, 50, 60, 70, 80, Inf),
+                            labels = c("30–39","40–49","50–59","60–69","70–79","80+")) {
+  df %>%
+    mutate(age_group = cut(age, breaks = breaks, labels = labels,
+                           right = FALSE, include.lowest = TRUE))
+}
+
+detect_svy_cols <- function(df) {
+  wts <- intersect(c("WTMEC6YR","WTMEC4YR","WTMEC2YR","WTINT2YR","WTMEC12YR"), names(df))
+  list(
+    weight = if (length(wts)) wts[1] else NA_character_,
+    strata = if ("SDMVSTRA" %in% names(df)) "SDMVSTRA" else NA_character_,
+    psu    = if ("SDMVPSU"  %in% names(df)) "SDMVPSU"  else NA_character_
+  )
+}
+
+age_prevalence_one <- function(d, severity_col = "imputed_severity", exclude_edentulous = TRUE) {
+  stopifnot(severity_col %in% names(d))
+  dd <- d
+  if (exclude_edentulous && all(c("tooth_count","missing_teeth") %in% names(dd))) {
+    dd <- dd %>% filter(!(tooth_count == 0 | missing_teeth == 28))
+  }
+  dd <- dd %>% make_age_groups() %>%
+    mutate(
+      is_severe = as.integer(.data[[severity_col]] == "Severe"),
+      is_modsev = as.integer(.data[[severity_col]] %in% c("Moderate","Severe"))
+    )
+
+  svy <- detect_svy_cols(dd)
+  if (!is.na(svy$weight) && !is.na(svy$strata) && !is.na(svy$psu)) {
+    des <- svydesign(
+      ids = as.formula(paste0("~", svy$psu)),
+      strata = as.formula(paste0("~", svy$strata)),
+      weights = as.formula(paste0("~", svy$weight)),
+      data = dd, nest = TRUE
+    )
+    prev_sev <- svyby(~is_severe,  ~age_group, des, svymean, vartype = "se", na.rm = TRUE, keep.names = FALSE)
+    prev_ms  <- svyby(~is_modsev,  ~age_group, des, svymean, vartype = "se", na.rm = TRUE, keep.names = FALSE)
+    dplyr::bind_rows(
+      prev_sev %>% transmute(age_group, outcome = "Severe",  est = is_severe, se = se),
+      prev_ms  %>% transmute(age_group, outcome = "Mod+Sev", est = is_modsev, se = se)
+    )
+  } else {
+    tmp <- dd %>% group_by(age_group) %>%
+      summarise(
+        est_sev = mean(is_severe, na.rm = TRUE),
+        est_ms  = mean(is_modsev, na.rm = TRUE),
+        n = dplyr::n(), .groups = "drop"
+      )
+    dplyr::bind_rows(
+      tmp %>% transmute(age_group, outcome = "Severe",  est = est_sev, se = sqrt(est_sev*(1-est_sev)/pmax(n,1))),
+      tmp %>% transmute(age_group, outcome = "Mod+Sev", est = est_ms,  se = sqrt(est_ms *(1-est_ms )/pmax(n,1)))
+    )
+  }
+}
+
+pool_rubin <- function(df_with_est_se) {
+  # df columns: age_group, outcome, .imp, est, se
+  df_with_est_se %>%
+    group_by(age_group, outcome) %>%
+    summarise(
+      m = n(),
+      qbar = mean(est),
+      W = mean(se^2),
+      B = var(est),
+      Tvar = W + (1 + 1/m) * B,
+      se_pooled = sqrt(Tvar),
+      lcl = qbar - 1.96 * se_pooled,
+      ucl = qbar + 1.96 * se_pooled,
+      .groups = "drop"
+    )
+}
+
+# ---- run per-imputation for CART and PMM ----
+cart_age_list <- lapply(seq_along(completed_cart), function(k) {
+  out <- age_prevalence_one(completed_cart[[k]], "imputed_severity", exclude_edentulous = TRUE)
+  out$.imp <- k; out$method <- "CART"; out
+})
+pmm_age_list <- lapply(seq_along(completed_pmm), function(k) {
+  out <- age_prevalence_one(completed_pmm[[k]], "imputed_severity", exclude_edentulous = TRUE)
+  out$.imp <- k; out$method <- "PMM"; out
+})
+
+age_imp_all <- dplyr::bind_rows(cart_age_list, pmm_age_list)
+
+# Save per-imputation results (optional)
+dir.create("age_trend_results", showWarnings = FALSE)
+write.csv(age_imp_all, "age_trend_results/age_trend_per_imputation.csv", row.names = FALSE)
+
+# ---- pooled (Rubin) results per method ----
+pooled_cart <- age_imp_all %>% filter(method == "CART") %>% pool_rubin() %>% mutate(method = "CART")
+pooled_pmm  <- age_imp_all %>% filter(method == "PMM")  %>% pool_rubin() %>% mutate(method = "PMM")
+pooled_both <- dplyr::bind_rows(pooled_cart, pooled_pmm)
+
+write.csv(pooled_both, "age_trend_results/age_trend_pooled_by_method.csv", row.names = FALSE)
+print(pooled_both)
+
+# ---- optional: observed (pre-imputation) baseline once ----
+observed_df <- completed_cart[[1]] %>% add_observed_severity()
+observed_by_age <- age_prevalence_one(observed_df, "observed_severity", exclude_edentulous = TRUE) %>%
+  mutate(series = "Observed (pre-imputation)",
+         lcl = est - 1.96*se, ucl = est + 1.96*se)
+
+# ---- plot: observed vs pooled CART & PMM ----
+plot_df <- dplyr::bind_rows(
+  pooled_both %>% transmute(age_group, outcome, est = qbar, lcl, ucl,
+                            series = paste0(method, " (pooled)")),
+  observed_by_age %>% select(age_group, outcome, est, lcl, ucl, series)
+)
+
+gg <- plot_df %>%
+  mutate(series = factor(series, levels = c("Observed (pre-imputation)",
+                                            "CART (pooled)", "PMM (pooled)"))) %>%
+  ggplot(aes(x = age_group, y = est, group = series, linetype = series)) +
+  geom_line(size = 0.9, position = position_dodge(width = 0.25)) +
+  geom_point(size = 2, position = position_dodge(width = 0.25)) +
+  geom_errorbar(aes(ymin = pmax(0,lcl), ymax = pmin(1,ucl)), width = 0.1,
+                position = position_dodge(width = 0.25)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(x = "Age group", y = "Prevalence", linetype = NULL,
+       title = "Age-trend validation: Observed vs Imputed (CART & PMM)") +
+  facet_wrap(~ outcome, ncol = 1, scales = "free_y") +
+  theme_minimal(base_size = 12)
+
+print(gg)
+ggsave("age_trend_results/age_trend_plot.png", gg, width = 8, height = 7, dpi = 300)
+```
+
+Cart/Pmm Difference
+```{r}
+
+library(dplyr)
+library(readr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+
+
+# ---- 0) Read your two CSVs ----------------------------------------------------
+per_imp  <- read_csv("age_trend_results/age_trend_per_imputation.csv")      # age_group, outcome, est, se, .imp, method
+pooled   <- read_csv("age_trend_results/age_trend_pooled_by_method.csv")     # age_group, outcome, m, qbar, W, B, Tvar, se_pooled, lcl, ucl, method
+
+# Make age_group an ordered factor (keeps x-axis in the right order)
+age_levels <- levels(factor(pooled$age_group))
+pooled <- pooled %>% mutate(age_group = factor(age_group, levels = age_levels))
+per_imp <- per_imp %>% mutate(age_group = factor(age_group, levels = age_levels))
+if (has_obs) observed <- observed %>% mutate(age_group = factor(age_group, levels = age_levels))
+
+# ---- 2) CART vs PMM difference table and plot --------------------------------
+cart <- pooled %>% filter(method == "CART") %>%
+  select(age_group, outcome, cart = qbar, cart_se = se_pooled, cart_lcl = lcl, cart_ucl = ucl)
+pmm  <- pooled %>% filter(method == "PMM") %>%
+  select(age_group, outcome, pmm  = qbar, pmm_se  = se_pooled, pmm_lcl  = lcl, pmm_ucl  = ucl)
+
+compare_methods <- cart %>%
+  inner_join(pmm, by = c("age_group","outcome")) %>%
+  mutate(
+    delta = cart - pmm,        # absolute difference in prevalence
+    rel   = cart / pmm         # ratio
+  )
+
+write_csv(compare_methods, "age_trend_results/cart_vs_pmm_pooled_diff.csv")
+
+# # Visual: difference bars (CART − PMM) by age, per outcome
+# plt_diff <- compare_methods %>%
+#   ggplot(aes(x = age_group, y = delta)) +
+#   geom_hline(yintercept = 0, linewidth = 0.3, color = "grey40") +
+#   geom_col(fill = "grey70") +
+#   scale_y_continuous(labels = percent_format(accuracy = 1)) +
+#   labs(x = "Age group", y = "CART − PMM (pp)",
+#        title = "Difference between methods (pooled)") +
+#   facet_wrap(~ outcome, ncol = 1, scales = "free_y") +
+#   theme_minimal(base_size = 12)
+
+# Adjustment: plot in percentage points (often clearer)
+plt_diff_pp <- compare_methods %>%
+  mutate(delta_pp = 100 * delta) %>%
+  ggplot(aes(x = age_group, y = delta_pp)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, color = "grey40") +
+  geom_col(fill = "grey70") +
+  scale_y_continuous(labels = label_number(accuracy = 0.1, suffix = " pp")) +  # <-- “pp”
+  labs(x = "Age group", y = "CART − PMM (pp)", title = "Prevalence Difference Between Methods (Pooled)") +
+  facet_wrap(~ outcome, ncol = 1, scales = "free_y") +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggsave("age_trend_results/cart_minus_pmm_bar_pp.png", plt_diff_pp, width = 7, height = 6, dpi = 300)
+```
+
+
+Pick one dataset by severity prevalence
+```{r}
+# ================== Build ONE CART dataset (closest to pooled) ==================
+library(dplyr)
+library(readr)
+
+#---- get stored imputed list objects ----
+out_dir <- "mi_artifacts"
+
+completed_cart <- readRDS(file.path(out_dir, "completed_CART_m10_it50_20250914-121824.rds"))
+
+# ---- 1) Choose the CART imputation closest to pooled severity -----------------
+pick_cart_closest <- function(lst) {
+  # pooled targets
+  target_modsev <- mean(sapply(lst, function(d) mean(d$imputed_severity %in% c("Moderate","Severe"), na.rm = TRUE)))
+  target_severe <- mean(sapply(lst, function(d) mean(d$imputed_severity == "Severe", na.rm = TRUE)))
+  # distance per imputation
+  score <- sapply(seq_along(lst), function(i) {
+    d  <- lst[[i]]
+    ms <- mean(d$imputed_severity %in% c("Moderate","Severe"), na.rm = TRUE)
+    sv <- mean(d$imputed_severity == "Severe", na.rm = TRUE)
+    (ms - target_modsev)^2 + (sv - target_severe)^2
+  })
+  list(index = which.min(score),
+       target = c(ModSev = target_modsev, Severe = target_severe),
+       chosen = c(ModSev = mean(lst[[which.min(score)]]$imputed_severity %in% c("Moderate","Severe"), na.rm = TRUE),
+                  Severe = mean(lst[[which.min(score)]]$imputed_severity == "Severe", na.rm = TRUE)),
+       score  = score)
+}
+
+sel <- pick_cart_closest(completed_cart)
+k_cart <- sel$index
+base_k <- completed_cart[[k_cart]]
+
+write.csv(base_k, "base_CART.csv", row.names = FALSE)
+
+```
+
+Append the ingored data points
+```{r}
+library(dplyr)
+
+#---- get stored imputed list objects ----
+out_dir <- "mi_artifacts"
+
+completed_cart <- readRDS(file.path(out_dir, "completed_CART_m10_it50_20250914-121824.rds"))
+completed_pmm <- readRDS(file.path(out_dir, "completed_PMM_m10_it50_20250915-194952.rds"))
+
+
+# 1) Identify the “lost” rows
+lost_ids <- anti_join(merged_df %>% select(SEQN),
+                      completed_cart[[1]] %>% select(SEQN), by = "SEQN")
+
+lost_rows <- merged_df %>% semi_join(lost_ids, by = "SEQN")
+
+# 2) Create the imputed_* tooth columns (copy observed tooth_* if present; else NA)
+tooth_obs <- grep("^tooth_\\d{2}_(ICAL|PD)$", names(merged_df), value = TRUE)
+tooth_imp <- paste0("imputed_", tooth_obs)
+for (nm in tooth_imp) lost_rows[[nm]] <- NA_real_
+
+if (length(tooth_obs) > 0) {
+  lost_rows[, tooth_imp] <- lost_rows[, tooth_obs]   # use observed values when available
+}
+
+# 3) Compute severity on these rows and set edentulous to None/Mild
+lost_rows <- add_imputed_severity(lost_rows)
+
+# 4) Make columns align with your completed sets
+template_names <- names(completed_cart[[1]])
+missing_cols <- setdiff(template_names, names(lost_rows))
+for (nm in missing_cols) lost_rows[[nm]] <- NA
+lost_rows <- lost_rows[, template_names]
+
+# 5) Append back into each imputed dataset (CART and PMM)
+completed_cart_fixed <- lapply(completed_cart,  function(d) dplyr::bind_rows(d, lost_rows))
+completed_pmm_fixed  <- lapply(completed_pmm,   function(d) dplyr::bind_rows(d, lost_rows))
+
+# Sanity check
+nrow(completed_cart_fixed[[1]])  # should be 11753 now
+nrow(completed_pmm_fixed[[1]])
+
+# -------------------- Save Mids and Completed Lists--------------------
+# make an artifacts folder
+out_dir <- "mi_artifacts_fixed"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+# ---- CART ----
+saveRDS(completed_cart_fixed,  file.path(out_dir, sprintf("completed_CART_fixed.rds")))
+saveRDS(completed_pmm_fixed,  file.path(out_dir, sprintf("completed_PMM_fixed.rds")))
+```
+
+Calculate imputed average and generate one dataset
+```{r}
+library(dplyr)
+
+#---- get stored imputed list objects ----
+out_dir <- "mi_artifacts_fixed"
+
+completed_cart <- readRDS(file.path(out_dir, "completed_CART_fixed.rds"))
+
+# --- helpers (same logic as imputation) -----------------------------------
+count_ge <- function(df, pattern, thr) {
+  sel <- grepl(pattern, names(df))
+  if (!any(sel)) return(rep(0L, nrow(df)))
+  rowSums(df[, sel, drop = FALSE] >= thr, na.rm = TRUE)
+}
+
+add_imputed_severity <- function(df) {
+  imp_pat_cal <- "^imputed_tooth_\\d{2}_ICAL$"
+  imp_pat_pd  <- "^imputed_tooth_\\d{2}_PD$"
+  df %>%
+    mutate(
+      imp_n_teeth_CAL_ge_4 = count_ge(., imp_pat_cal, 4),
+      imp_n_teeth_CAL_ge_6 = count_ge(., imp_pat_cal, 6),
+      imp_n_teeth_PD_ge_5  = count_ge(., imp_pat_pd,  5),
+      imputed_severity = dplyr::case_when(
+        (tooth_count == 0 | missing_teeth == 28) ~ "None/Mild",
+        imp_n_teeth_CAL_ge_6 >= 2 & imp_n_teeth_PD_ge_5 >= 1 ~ "Severe",
+        imp_n_teeth_CAL_ge_4 >= 2 | imp_n_teeth_PD_ge_5 >= 2 ~ "Moderate",
+        TRUE ~ "None/Mild"
+      )
+    )
+}
+
+# --- 1) identify tooth columns from the first completed CART dataset ----------
+stopifnot(is.list(completed_cart), length(completed_cart) >= 2)
+imp_cols <- grep("^imputed_tooth_\\d{2}_(ICAL|PD)$",
+                 names(completed_cart[[1]]), value = TRUE)
+stopifnot(length(imp_cols) > 0)
+
+# We'll keep non-imputed columns from the first dataset as the "base frame"
+base <- completed_cart[[1]] %>%
+  select(-any_of(c("imp_n_teeth_CAL_ge_4",
+                   "imp_n_teeth_CAL_ge_6",
+                   "imp_n_teeth_PD_ge_5"))) # these will be recomputed
+
+# Edentulous mask (use the base’s flags for alignment)
+edentulous <- (base$tooth_count == 0 | base$missing_teeth == 28)
+
+# --- 2) align all 10 datasets to base SEQN order, then accumulate sums/counts --
+# This avoids any row-order headaches and lets us ignore edentulous in averages.
+m <- length(completed_cart)
+n <- nrow(base); p <- length(imp_cols)
+
+sum_mat   <- matrix(0, n, p)
+count_mat <- matrix(0, n, p)
+
+for (i in seq_len(m)) {
+  di <- completed_cart[[i]]
+  # align by SEQN to base order
+  idx <- match(base$SEQN, di$SEQN)
+  if (any(is.na(idx))) stop("Mismatch in SEQN between completed_cart[[1]] and [[", i, "]]")
+  di <- di[idx, ]
+
+  mat <- as.matrix(di[, imp_cols, drop = FALSE])
+
+  # ignore edentulous rows during averaging
+  if (any(edentulous)) {
+    mat[edentulous, ] <- NA_real_
+  }
+
+  valid <- !is.na(mat)
+  mat[!valid] <- 0
+  sum_mat <- sum_mat + mat
+  count_mat <- count_mat + valid
+}
+
+avg_mat <- sum_mat / pmax(count_mat, 1)
+avg_mat[count_mat == 0] <- NA_real_
+
+# --- 3) overwrite the imputed tooth columns with the across-imputation averages
+averaged_cart <- base
+averaged_cart[, imp_cols] <- avg_mat
+
+# --- 4) recompute CDC/AAP severity on the averaged tooth values ---------------
+averaged_cart <- add_imputed_severity(averaged_cart)
+
+# Ensure edentulous are explicitly None/Mild (already done in add_imputed_severity, but be explicit)
+averaged_cart$imputed_severity[edentulous] <- "None/Mild"
+
+# --- 5) save it ---------------------------------------------------------------
+out_dir <- "synthetic_outputs"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+out_csv <- file.path(out_dir, "averaged_CART_imputed_CAL_PD_with_severity.csv")
+write.csv(averaged_cart, out_csv, row.names = FALSE)
+cat("Wrote: ", out_csv, "\n", sep = "")
+
+# --- 6) optional: quick sanity checks you can print/log -----------------------
+prev_modsev <- mean(averaged_cart$imputed_severity %in% c("Moderate","Severe"), na.rm = TRUE)
+prev_severe <- mean(averaged_cart$imputed_severity == "Severe", na.rm = TRUE)
+cat(sprintf("Prevalence (Mod+Sev): %.1f%% | (Severe): %.1f%%\n", 100*prev_modsev, 100*prev_severe))
+
+```
+
+
+
